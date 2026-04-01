@@ -15,14 +15,14 @@ EdTech companies handle some of the most sensitive data on the planet: student r
 | [differential-review](plugins/differential-review/) | Code Auditing | Security-focused PR review with EdTech-specific threat modeling |
 | [student-data-audit](plugins/student-data-audit/) | Data Protection | Scan for PII leaks, insecure storage of student data |
 | [llm-safety-review](plugins/llm-safety-review/) | AI Safety | Audit LLM integrations for prompt injection, data exfiltration, output safety |
+| [edtech-compliance](plugins/edtech-compliance/) | Compliance | FERPA, COPPA, GDPR, KVKK compliance checklist scanner |
+| [auth-flow-review](plugins/auth-flow-review/) | Authentication | Token handling, session management, RBAC review |
+| [api-surface-audit](plugins/api-surface-audit/) | API Security | Map exposed endpoints, check auth & rate-limiting |
 
 ### Planned
 
 | Skill | Category | Purpose |
 |---|---|---|
-| `edtech-compliance` | Compliance | FERPA, COPPA, GDPR, KVKK compliance checklist scanner |
-| `auth-flow-review` | Authentication | Token handling, session management, RBAC review |
-| `api-surface-audit` | API Security | Map exposed endpoints, check auth & rate-limiting |
 | `frontend-xss-audit` | Frontend Security | React/Vue XSS vector detection |
 | `dependency-risk-check` | Supply Chain | Audit deps for vulns + abandonment signals |
 
