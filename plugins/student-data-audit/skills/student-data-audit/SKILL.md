@@ -2,6 +2,8 @@
 
 Scan codebases for student PII exposure risks, insecure data storage, compliance gaps, and data lifecycle violations. Purpose-built for EdTech applications handling sensitive educational records.
 
+> **Scope note**: This skill audits what's visible in the codebase — frontend, API clients, configuration, and any backend code present. For frontend-only repositories (e.g., React SPAs), findings are limited to client-side concerns: localStorage, analytics events, console logs, rendered content, and API response handling. Backend storage, encryption, and server-side access controls require a separate full-stack audit.
+
 ## Quick Reference
 
 | Data Category | Sensitivity | Examples | Required Protection |
@@ -55,6 +57,12 @@ grep -rn "student\|profile\|grade\|roster\|enrollment" --include="*.ts" --includ
 
 # Find environment variables that may contain student data paths
 grep -rn "STUDENT\|PII\|RECORD\|GRADE" .env* docker-compose* *.yml
+
+# Find generated API client types (Orval, OpenAPI codegen, GraphQL codegen)
+grep -rn "Student.*interface\|interface.*Student\|type.*Student" --include="*.ts" --include="*.schemas.ts" src/
+
+# Find React Query hooks that fetch student data
+grep -rn "useGet.*Student\|useGet.*Grade\|useGet.*Score\|useList.*Student" --include="*.ts" --include="*.tsx" src/
 ```
 
 ### Phase 2: Storage Security
@@ -72,12 +80,32 @@ For each data location found in Phase 1:
 Trace student data through the application:
 
 - [ ] **Frontend → Backend**: Is PII sent in URL params (logged in server access logs)?
+- [ ] **Frontend → Console**: Are `console.log`/`console.error` calls leaking student IDs, names, or grades?
+- [ ] **Frontend → Analytics**: Does the analytics `track()` function spread all args to PostHog/GA? Can callers accidentally send PII?
+- [ ] **Frontend → localStorage**: Is student data or auth tokens stored in localStorage (XSS-accessible)?
 - [ ] **Backend → Database**: Are queries parameterized (no SQL injection)?
 - [ ] **Backend → External Services**: Which 3rd parties receive student data?
 - [ ] **Backend → Logs**: Is PII stripped before logging?
 - [ ] **Backend → Analytics**: Is student data anonymized before tracking?
 - [ ] **Backend → AI/LLM**: Is student PII sent in prompts? Can it leak in completions?
 - [ ] **Backend → Cache**: Is cached student data scoped to the correct tenant/user?
+
+```bash
+# Find console.log/error with student data (often left from debugging)
+grep -rn "console\.\(log\|error\|warn\|info\|debug\)" --include="*.ts" --include="*.tsx" src/ | grep -i "student\|grade\|score\|name\|email"
+
+# Find analytics tracking functions — check what data they send
+grep -rn "track(\|capture(\|identify(\|posthog\.\|analytics\." --include="*.ts" --include="*.tsx" src/ | grep -v "node_modules\|\.test\.\|\.spec\."
+
+# Find localStorage usage with potentially sensitive data
+grep -rn "localStorage\.\(set\|get\)Item" --include="*.ts" --include="*.tsx" src/
+
+# Find JWT token handling on the client side
+grep -rn "atob\|jwt\|token.*parse\|parse.*token\|decode.*token" --include="*.ts" --include="*.tsx" src/
+
+# Find error observability that might forward PII (PostHog, Sentry, etc.)
+grep -rn "captureException\|captureMessage\|Sentry\.\|posthog\.\|breadcrumb" --include="*.ts" --include="*.tsx" src/
+```
 
 ### Phase 4: Compliance Check
 
@@ -107,6 +135,11 @@ Trace student data through the application:
 - Student data in client-side localStorage or cookies
 - API endpoints returning more student fields than needed (no field filtering)
 - LLM prompts containing student names, grades, or other PII
+- JWT tokens in localStorage decoded with `atob()` (XSS → full account takeover)
+- Analytics `track()` using `...args` spread without PII filtering — any caller can accidentally send student data to PostHog/GA
+- Error observability (PostHog `captureException`, Sentry) forwarding API response bodies that contain student data without redaction
+- `console.error` in production code that includes student IDs, chat IDs, or grade values (survives tree-shaking in most bundlers)
+- Error sanitization that redacts `token/password/secret` but not `email/name/grade/studentId` — partial protection creates false confidence
 
 ## Output
 

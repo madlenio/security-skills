@@ -197,3 +197,65 @@ const messages = [
   { role: "user", content: `Explain this to students: <educational_content>${concept}</educational_content>` }
 ];
 ```
+
+## Pattern 11: LLM Context Leaking to Analytics via Track Function
+
+**Risk**: A generic analytics `track()` function that spreads all arguments to PostHog/GA. If an LLM integration passes conversation context, prompt content, or generated output through the same tracking function, it silently flows to third-party analytics platforms.
+
+```typescript
+// VULNERABLE: Generic track function with ...args spread
+const track = async (event: AnalyticsEvent, ...args: any[]) => {
+  posthog.capture(`${event.category} - ${event.action}`, args);
+};
+
+// Somewhere in an LLM feature:
+track(
+  { category: "AI", action: "quiz.generated", label: "biology" },
+  { prompt: systemPrompt, response: llmResponse, studentContext: "Grade 8, IEP accommodations" }
+);
+// → The full system prompt, LLM response, AND student context are now in PostHog
+
+// FIXED: Analytics wrapper should strip LLM/content data
+const LLM_BLOCKLIST = ["prompt", "response", "completion", "context", "systemMessage", "messages", "content"];
+
+const track = async (event: AnalyticsEvent, metadata?: Record<string, unknown>) => {
+  const safeMetadata = metadata
+    ? Object.fromEntries(Object.entries(metadata).filter(([k]) => !LLM_BLOCKLIST.includes(k)))
+    : {};
+  posthog.capture(`${event.category} - ${event.action}`, safeMetadata);
+};
+```
+
+**Search pattern:**
+```bash
+# Find track/capture calls near LLM/AI code
+grep -rn "track(\|capture(" --include="*.ts" --include="*.tsx" src/ | grep -i "ai\|llm\|chat\|prompt\|assistant\|generate"
+```
+
+## Pattern 12: LLM Response Stored in Client-Side State Without Cleanup
+
+**Risk**: AI-generated content (which may contain reflected student data) persists in React state, React Query cache, or localStorage long after the user navigates away.
+
+```typescript
+// VULNERABLE: LLM response with student context cached indefinitely
+const { data: aiResponse } = useQuery(
+  ["ai-feedback", studentId, assignmentId],
+  () => generateFeedback(studentId, assignmentId),
+  { staleTime: Infinity } // Cached forever in browser memory
+);
+
+// FIXED: Short cache time for LLM responses containing student context
+const { data: aiResponse } = useQuery(
+  ["ai-feedback", studentId, assignmentId],
+  () => generateFeedback(studentId, assignmentId),
+  {
+    staleTime: 5 * 60 * 1000,     // 5 minutes
+    cacheTime: 10 * 60 * 1000,    // 10 minutes then garbage collected
+  }
+);
+
+// Also clear on navigation away:
+useEffect(() => {
+  return () => queryClient.removeQueries(["ai-feedback", studentId]);
+}, [studentId]);
+```

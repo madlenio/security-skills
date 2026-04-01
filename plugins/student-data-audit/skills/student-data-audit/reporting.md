@@ -2,13 +2,23 @@
 
 ## Severity Definitions
 
-| Severity | Description | Examples |
+| Severity | Description | EdTech Examples |
 |---|---|---|
-| **CRITICAL** | Active PII exposure, compliance violation with legal risk | Unencrypted PII in logs, student data in analytics, no auth on student endpoints |
-| **HIGH** | Significant data protection gap, exploitable with moderate effort | Over-fetched API responses, missing tenant isolation, PII in error messages |
-| **MEDIUM** | Defense-in-depth gap, limited direct exposure | Missing retention policies, weak anonymization, client-side PII caching |
-| **LOW** | Best practice violation, no direct exposure | Missing privacy headers, verbose error codes, documentation gaps |
-| **INFO** | Observation for future improvement | Architecture suggestions, tooling recommendations |
+| **CRITICAL** | Active PII exposure or compliance violation with legal risk. Data is already leaking or trivially exploitable. | Student names/emails in PostHog events, unauth'd student data endpoint, PII in URL params |
+| **HIGH** | Significant data protection gap, exploitable with moderate effort by a motivated actor. | `dangerouslySetInnerHTML` with unsanitized LLM output, analytics `track()` spreading all args to 3rd parties, JWT in localStorage without short expiry |
+| **MEDIUM** | Defense-in-depth gap. Not directly exploitable alone, but weakens the overall security posture. | Error sanitizer redacting tokens but not emails, `console.error` with student IDs in production, generated API client caching full student objects |
+| **LOW** | Best practice violation with minimal direct risk. | Missing CSP headers, debug console.log statements, no explicit retention policy in frontend |
+| **INFO** | Observation — no direct risk, but worth noting for architecture decisions. Often indicates backend/legal action needed. | No KVKK consent UI (may exist server-side), no data export feature in frontend |
+
+## Audit Scope
+
+Specify the audit scope at the top of every report:
+
+| Scope | What's Covered | What's NOT Covered |
+|---|---|---|
+| **Full-stack** | Frontend + backend + database + infrastructure | External vendor security |
+| **Frontend-only** | Client-side code, API client usage, localStorage, analytics, rendered content | Backend access controls, DB encryption, server logs, infra |
+| **Backend-only** | Server code, DB queries, API auth, logging, external integrations | Client-side rendering, XSS, localStorage |
 
 ## Report Template
 

