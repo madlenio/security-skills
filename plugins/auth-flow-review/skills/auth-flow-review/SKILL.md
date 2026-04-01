@@ -54,16 +54,27 @@ grep -rn "jwt\|jsonwebtoken\|sign(\|verify(\|token\|bearer" --include="*.ts" --i
 
 # Find OAuth/SSO configuration
 grep -rn "oauth\|openid\|saml\|sso\|passport\|next-auth\|auth0\|clerk\|supabase.*auth" --include="*.ts" --include="*.py" --include="*.js" --include="*.env*" .
+
+# Find Firebase Auth (common in EdTech)
+grep -rn "getAuth\|signInWith\|onAuthStateChanged\|getIdToken\|firebase.*auth\|signInWithCustomToken" --include="*.ts" --include="*.tsx" src/
+
+# Find iframe/LMS auth token injection (TED Ankara, Google Classroom, Canvas LTI)
+grep -rn "postMessage\|iframe.*token\|iframe.*auth\|atob\|base64.*decode\|DATA_PARAM\|tedankara\|lti" --include="*.ts" --include="*.tsx" src/
+
+# Find global auth state variables (mutable globals = risk)
+grep -rn "let.*token\|let.*role\|let.*auth\|globalToken\|globalUserRole\|setUserRole\|setGlobalToken" --include="*.ts" --include="*.tsx" src/
 ```
 
 **Check for:**
 
-- [ ] **Password hashing**: bcrypt/scrypt/argon2 with appropriate cost factor (not MD5/SHA)
+- [ ] **Password hashing**: bcrypt/scrypt/argon2 with appropriate cost factor (not MD5/SHA). If using Firebase Auth, password handling is delegated — verify Firebase project config instead
 - [ ] **Salt**: Per-user random salt (not global or missing)
 - [ ] **Rate limiting**: Login attempts limited per IP and per account
 - [ ] **Account lockout**: Temporary lockout after failed attempts
 - [ ] **Credential stuffing defense**: CAPTCHA or similar after suspicious activity
 - [ ] **Password requirements**: Minimum length, breach database check
+- [ ] **Firebase custom token flow**: If backend issues `customToken` for `signInWithCustomToken`, verify the backend validates the upstream auth (OAuth code, LMS token) before issuing it
+- [ ] **Iframe token injection**: If auth data comes via URL params or `postMessage`, verify origin checking and token scope
 
 ### Phase 2: Token & Session Security
 
@@ -138,6 +149,31 @@ grep -rn "findAll\|find(\|findMany\|select.*from\|SELECT.*FROM" --include="*.ts"
 | **Assessment lockdown** | Students restricted during exams | Server-enforced? Can't bypass with DevTools? |
 | **LTI integration** | External tool authentication | LTI signatures validated? Launch context verified? |
 | **Shared devices** | Kiosk/lab computer usage | Session cleanup? Auto-logout? No persistent tokens? |
+| **LMS iframe embedding** | App embedded in school LMS (TED, Canvas, etc.) | Token injected via URL param? Base64 decoded? Origin verified? localStorage persisted? |
+| **Multi-auth-context** | Same app serves teacher standalone + student iframe + mobile webview | Token scope isolation? Role correctly set per context? Cross-context token leakage? |
+| **OAuth callback → postMessage** | OAuth providers redirect to callback page that postMessages token to parent | Wildcard `"*"` origin? Token interceptable by embedding page? |
+
+### Phase 6: Global Mutable Auth State (Frontend-Specific)
+
+Many frontend apps store auth state in module-level `let` variables for header injection. Audit these carefully:
+
+```bash
+# Find global mutable auth variables
+grep -rn "^let.*token\|^let.*role\|^let.*auth\|^let.*organizationId" --include="*.ts" --include="*.tsx" src/
+
+# Find functions that mutate global auth state
+grep -rn "export.*function.*set.*Token\|export.*function.*set.*Role\|export.*const.*set.*Token" --include="*.ts" src/
+
+# Check if these setters are importable/callable from browser console
+grep -rn "export.*setUserRole\|export.*setGlobalToken\|export.*setIframeAuthData" --include="*.ts" src/
+```
+
+**Check for:**
+
+- [ ] Are global auth variables (`let globalToken`, `let globalUserRole`) exported and callable from DevTools?
+- [ ] Can a user call `setUserRole("ADMIN")` from the browser console to escalate privileges?
+- [ ] Does the backend independently validate the `UserRole` header, or does it trust the client?
+- [ ] If role is a `let` variable, can two browser tabs interfere with each other's role?
 
 ## Red Flags — Immediate Escalation
 
@@ -151,6 +187,12 @@ grep -rn "findAll\|find(\|findMany\|select.*from\|SELECT.*FROM" --include="*.ts"
 - Missing tenant scoping on database queries
 - Admin endpoints accessible without admin role verification
 - Hard-coded credentials or API keys in source code
+- Global mutable `let` variable for user role — callable via DevTools `setUserRole("ADMIN")`. If backend trusts `UserRole` header → privilege escalation
+- Auth tokens passed as URL query parameters (visible in browser history, server logs, referrer headers)
+- Base64-encoded auth data in URL params stored in localStorage without expiry
+- `postMessage("*")` sending custom tokens from OAuth callback pages
+- `ProtectedRoute` checking only `isAuthenticated` without role-based route guards — all authenticated users access all routes
+- Firebase custom token issued without validating the upstream auth provider's response
 
 ## Output
 
