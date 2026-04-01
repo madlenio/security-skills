@@ -119,6 +119,12 @@ grep -rn "Function(\`\|eval(\`" --include="*.ts" --include="*.js" src/
 
 # postMessage without origin check
 grep -rn "addEventListener.*message\|onmessage" --include="*.ts" --include="*.tsx" --include="*.js" src/
+
+# postMessage SENDING with wildcard "*" origin (auth token leakage)
+grep -rn "postMessage(" --include="*.ts" --include="*.tsx" --include="*.js" src/ | grep '"\\*"'
+
+# BroadcastChannel (same-origin, lower risk but verify usage)
+grep -rn "BroadcastChannel" --include="*.ts" --include="*.tsx" src/
 ```
 
 **For each postMessage handler, verify:**
@@ -126,6 +132,12 @@ grep -rn "addEventListener.*message\|onmessage" --include="*.ts" --include="*.ts
 - [ ] Is `event.origin` checked against an allowed list?
 - [ ] Is `event.data` validated before use?
 - [ ] Is the handler registered with a specific origin filter?
+
+**For each postMessage SENDER, verify:**
+
+- [ ] Is the target origin specific (NOT `"*"`)?
+- [ ] Does the message contain auth tokens, session data, or PII?
+- [ ] If `"*"` is used with sensitive data (tokens, custom auth), this is a **HIGH** finding — any page embedding this as an iframe can intercept the token
 
 ### Phase 4: LLM Output XSS (EdTech-Specific)
 
@@ -135,12 +147,17 @@ In EdTech apps, AI-generated content is often rendered as rich HTML/Markdown:
 # Find where LLM/AI output is rendered
 grep -rn "dangerouslySetInnerHTML\|v-html\|\.innerHTML" --include="*.tsx" --include="*.vue" --include="*.ts" src/ | grep -i "ai\|llm\|chat\|response\|completion\|generated\|content\|answer\|explanation"
 
-# Find markdown renderers
-grep -rn "react-markdown\|ReactMarkdown\|marked\|remark\|rehype\|markdown-it" --include="*.tsx" --include="*.ts" --include="*.js" src/
+# Find markdown renderers (including streaming variants)
+grep -rn "react-markdown\|ReactMarkdown\|marked\|remark\|rehype\|markdown-it\|Streamdown\|streamdown" --include="*.tsx" --include="*.ts" --include="*.js" src/
 
 # Check markdown config for raw HTML passthrough
 grep -rn "rehype-raw\|html:\s*true\|sanitize:\s*false\|allowDangerousHtml" --include="*.ts" --include="*.tsx" --include="*.js" src/
+
+# Check what remark/rehype plugins are used (safe vs dangerous)
+grep -rn "remarkPlugins\|rehypePlugins" --include="*.tsx" --include="*.ts" src/
 ```
+
+> **Streaming markdown renderers** (e.g., `streamdown`, `react-markdown-stream`): These are commonly used in AI chat UIs to render LLM output token-by-token. They are safe as long as they don't enable `rehype-raw` or raw HTML passthrough. Verify plugin configuration — `remarkGfm`, `remarkMath`, `rehypeKatex` are safe; `rehypeRaw` is dangerous.
 
 **LLM XSS attack flow:**
 1. Attacker crafts input that manipulates LLM to output HTML with scripts
@@ -192,10 +209,14 @@ Identify every place users can submit content that's displayed to others:
 - Markdown renderer with `rehype-raw` or `html: true` on user content
 - `eval()` or `new Function()` with any user-controlled input
 - `postMessage` handler without origin verification
+- `postMessage` SENDING with `"*"` origin containing auth tokens — any embedding page can intercept
 - `href` accepting user input without protocol validation
-- No Content Security Policy in production
+- No Content Security Policy in production (common in Vite/CRA SPAs — must be added via meta tag or server headers)
 - SVG uploads rendered inline without sanitization
 - Student-submitted content displayed to teachers without escaping
+- `contentEditable` elements or rich text editors whose `innerHTML` is read and stored without sanitization
+- OAuth callback pages that `postMessage` tokens to `"*"` origin instead of the specific parent origin
+- i18n translation keys rendered via `dangerouslySetInnerHTML` — safe if keys are developer-controlled, but vulnerable if keys come from a CMS or user-editable source
 
 ## Output
 

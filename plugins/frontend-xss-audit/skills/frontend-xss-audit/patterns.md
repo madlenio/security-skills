@@ -281,3 +281,111 @@ function LearningOutcomeSelector({ outcomes }) {
 import DOMPurify from "dompurify";
 <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(outcome.description) }} />
 ```
+
+### Pattern 13: Streaming Markdown Renderer for LLM Output
+
+EdTech AI chat UIs use streaming markdown renderers to show LLM output token-by-token. The security depends entirely on the plugin configuration.
+
+```tsx
+// SAFE: Streamdown/ReactMarkdown with only safe plugins
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+
+<Streamdown
+  remarkPlugins={[remarkGfm, remarkMath]}
+  rehypePlugins={[rehypeKatex]}
+>
+  {llmResponse}
+</Streamdown>
+
+// WHY IT'S SAFE:
+// - No rehype-raw → HTML tags in LLM output are escaped, not rendered
+// - remarkGfm → GitHub-flavored markdown (tables, strikethrough) — safe
+// - remarkMath + rehypeKatex → LaTeX rendering — KaTeX sanitizes its output
+// - If attacker injects <script>alert(1)</script> in LLM output → rendered as text
+
+// DANGEROUS: Same renderer with rehype-raw added
+import rehypeRaw from "rehype-raw";
+
+<Streamdown
+  remarkPlugins={[remarkGfm, remarkMath]}
+  rehypePlugins={[rehypeRaw, rehypeKatex]}  // ❌ rehype-raw passes HTML through!
+>
+  {llmResponse}
+</Streamdown>
+// Now <script>, <img onerror=...> etc. in LLM output WILL execute
+```
+
+**Key check**: Search for `rehype-raw` in your dependency tree, not just imports:
+```bash
+grep -rn "rehype-raw" package.json package-lock.json yarn.lock
+```
+
+### Pattern 14: postMessage with Wildcard Origin Sending Auth Tokens
+
+OAuth callbacks and iframe auth flows often use `postMessage` to pass tokens to the parent window. Using `"*"` as the target origin means ANY page that embeds your OAuth callback can steal the token.
+
+```typescript
+// VULNERABLE: Auth token sent to any origin
+// In an OAuth callback page (e.g., /auth/callback):
+window.top?.postMessage(
+  JSON.stringify({ type: "authToken", customToken }),
+  "*"  // ❌ Any page embedding this iframe receives the token
+);
+
+// Attack scenario:
+// 1. Attacker creates evil.com with <iframe src="https://yourapp.com/auth/edlink-callback">
+// 2. User authenticates via Edlink OAuth
+// 3. Callback page postMessages the token to "*"
+// 4. evil.com's message handler captures the token
+// 5. Attacker has full account access
+
+// FIXED: Specify the exact parent origin
+const ALLOWED_PARENTS = ["https://teacher.madlen.io", "https://student.madlen.io"];
+
+window.top?.postMessage(
+  JSON.stringify({ type: "authToken", customToken }),
+  ALLOWED_PARENTS[0]  // ✅ Only the real parent can receive it
+);
+
+// For React Native WebView contexts, use a separate channel:
+if (window.ReactNativeWebView) {
+  window.ReactNativeWebView.postMessage(JSON.stringify({ type: "authToken", customToken }));
+  // ReactNativeWebView.postMessage is only available in the native context — safe
+}
+```
+
+**Search pattern:**
+```bash
+grep -rn 'postMessage(' --include="*.ts" --include="*.tsx" src/ | grep '"\\*"'
+```
+
+### Pattern 15: contentEditable innerHTML Extraction
+
+Rich text editors and fill-in-the-blank question editors use `contentEditable` elements. When the `innerHTML` of these elements is extracted and stored, any HTML injected by the user persists.
+
+```tsx
+// VULNERABLE: innerHTML read from contentEditable without sanitization
+const editorRef = useRef<HTMLDivElement>(null);
+
+// Setting content:
+editorRef.current.innerHTML = bodyToHtml(question.body);
+
+// Reading content (on save):
+const content = editorRef.current.innerHTML;
+await saveQuestion({ body: content }); // Raw HTML saved to database
+
+// If a teacher types: <img src=x onerror="alert(1)"> in the editor,
+// this HTML is saved and will execute when another teacher views it
+
+// FIXED: Sanitize both on render and on save
+import DOMPurify from "dompurify";
+
+// On render:
+editorRef.current.innerHTML = DOMPurify.sanitize(bodyToHtml(question.body));
+
+// On save:
+const content = DOMPurify.sanitize(editorRef.current.innerHTML);
+await saveQuestion({ body: content });
+```
