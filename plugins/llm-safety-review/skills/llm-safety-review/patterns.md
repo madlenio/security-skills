@@ -259,3 +259,98 @@ useEffect(() => {
   return () => queryClient.removeQueries(["ai-feedback", studentId]);
 }, [studentId]);
 ```
+
+## Pattern 13: Client-Side Model Selection Manipulation
+
+**Risk**: Frontend lets users choose an AI model (GPT-4, Claude, Gemini) and sends the model ID to the backend. If the backend doesn't validate, users can manipulate the request to use more expensive models or models not intended for their tier.
+
+```typescript
+// Frontend: User selects from available models
+const availableModels = [
+  { id: "gpt-4o-mini", name: "GPT-4o Mini" },      // Cheap
+  { id: "gpt-4o", name: "GPT-4o" },                  // Expensive
+  { id: "claude-3-opus", name: "Claude 3 Opus" },    // Most expensive
+];
+
+// API call sends the selected model ID
+await fetch("/api/chat/send", {
+  body: JSON.stringify({ message: input, model: selectedModel.id }),
+});
+
+// ATTACK: User opens DevTools, modifies the request body:
+// { message: "...", model: "gpt-4-turbo-128k" } ← model not in UI but accepted by backend
+
+// REQUIRED: Backend must validate model against user's tier/subscription
+// Backend:
+const ALLOWED_MODELS_BY_TIER = {
+  free: ["gpt-4o-mini"],
+  pro: ["gpt-4o-mini", "gpt-4o"],
+  enterprise: ["gpt-4o-mini", "gpt-4o", "claude-3-opus"],
+};
+
+const userTier = await getUserTier(req.user.id);
+if (!ALLOWED_MODELS_BY_TIER[userTier].includes(req.body.model)) {
+  return res.status(403).json({ error: "Model not available for your plan" });
+}
+```
+
+## Pattern 14: Multi-Context Token Scope Confusion
+
+**Risk**: EdTech apps often run in multiple contexts (standalone, iframe, embedded in LMS, mobile webview). Token resolution falls through a chain of sources. If scoping isn't strict, a student-context token could access teacher AI endpoints.
+
+```typescript
+// VULNERABLE: Fallback chain without scope validation
+const activeToken = getGlobalToken()            // Teacher's main token
+  || token                                       // Prop-passed token
+  || getEmbeddedStudentToken();                  // Student iframe token
+
+// If getGlobalToken() returns a stale teacher token in a student context,
+// the student's AI requests are authenticated as a teacher
+
+// FIXED: Context-aware token resolution
+const getTokenForContext = (context: "teacher" | "student" | "embedded") => {
+  switch (context) {
+    case "teacher":
+      return getGlobalToken(); // Only teacher token
+    case "student":
+      return getEmbeddedStudentToken(); // Only student token
+    case "embedded":
+      return getIframeToken(); // Only iframe token
+    default:
+      throw new Error("Unknown context");
+  }
+};
+
+// Plus: Backend validates token scope matches the endpoint
+// A student token should NOT work on /api/teacher/chat/send
+```
+
+## Pattern 15: SSE Stream Error Logging with Sensitive Data
+
+**Risk**: Server-Sent Event (SSE) stream handlers often have try/catch that logs the raw event data on parse failure. If the stream contains student data, LLM reasoning, or system prompt fragments, this data ends up in browser console (or error monitoring).
+
+```typescript
+// VULNERABLE: Raw stream data logged on error
+eventSource.addEventListener("message", (event: any) => {
+  try {
+    const data = JSON.parse(event.data);
+    processEvent(data);
+  } catch (error) {
+    console.error("Failed to parse SSE event data:", event.data, error);
+    // ↑ event.data may contain: LLM partial response, student names,
+    //   system prompt fragments, or malformed JSON with sensitive content
+  }
+});
+
+// FIXED: Log error code only, not raw data
+eventSource.addEventListener("message", (event: any) => {
+  try {
+    const data = JSON.parse(event.data);
+    processEvent(data);
+  } catch (error) {
+    console.error("SSE parse error for event type:", event.type);
+    // Don't log event.data — it may contain sensitive content
+    // In production, report to error monitoring with sanitized context only
+  }
+});
+```

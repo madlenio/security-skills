@@ -13,10 +13,54 @@ Audit LLM integrations for prompt injection, data exfiltration, output safety, a
 | **Cost Exploitation** | MEDIUM | Users trigger excessive API calls, model upgrades, or long contexts |
 | **Output Integrity** | HIGH | LLM fabricates citations, invents facts, hallucinates in assessments |
 
+## Architecture Triage
+
+Before diving into phases, determine the LLM integration architecture:
+
+```
+START → How does the frontend talk to the LLM?
+  │
+  ├─ DIRECT: Frontend imports LLM SDK (openai, @anthropic-ai/sdk)
+  │   └─ All phases apply fully. API keys in frontend = CRITICAL.
+  │
+  ├─ BACKEND-PROXIED: Frontend calls your API → backend calls LLM
+  │   └─ Most common in production EdTech apps.
+  │   └─ Frontend audit focuses on: output rendering, model selection
+  │      manipulation, token/cost abuse via API parameters, data leakage
+  │      through analytics/logs.
+  │   └─ Backend audit (if accessible) focuses on: prompt construction,
+  │      injection defense, data boundaries, rate limiting.
+  │
+  └─ HYBRID: Some direct calls (e.g., embeddings) + backend proxy
+      └─ Audit both paths. Direct calls get full scrutiny.
+```
+
+**Detection commands:**
+
+```bash
+# Check for direct LLM SDK imports (DIRECT architecture)
+grep -rn "from ['\"]openai\|from ['\"]@anthropic-ai\|from ['\"]@google/generative-ai\|from ['\"]cohere" --include="*.ts" --include="*.tsx" src/
+
+# Check for backend-proxied pattern (API calls to your own backend)
+grep -rn "useCreate.*Tool\|useGenerate\|useEnhance\|/api/.*chat\|/api/.*generate\|/api/.*complete" --include="*.ts" --include="*.tsx" src/
+
+# Check for SSE/streaming endpoints (common in chat UIs)
+grep -rn "EventSource\|fetchEventSource\|text/event-stream\|XhrSource\|useStream\|SSE" --include="*.ts" --include="*.tsx" src/
+
+# Check for webhook-based AI generation (async tool creation)
+grep -rn "webhook\|polling\|useCreate.*Tool\|toolStatus\|generation.*status" --include="*.ts" --include="*.tsx" src/
+```
+
+> **For backend-proxied apps**: The frontend audit identifies client-side attack surfaces (output XSS, model manipulation, cost abuse, data leakage). A full prompt injection and data boundary audit requires backend code access.
+
 ## Decision Tree
 
 ```
 START → Map all LLM integration points in the application
+  │
+  ├─ Architecture? (see triage above)
+  │   ├─ DIRECT → Full audit, all phases
+  │   └─ BACKEND-PROXIED → Focus on Phases 3, 5 + client-side concerns below
   │
   ├─ Does user input flow into LLM prompts?
   │   └─ YES → Check prompt injection defenses (Phase 1)
@@ -33,6 +77,10 @@ START → Map all LLM integration points in the application
   ├─ Does the LLM use tools/function calling?
   │   └─ YES → Check tool safety (Phase 4)
   │   └─ Flag if: unrestricted tool access, no confirmation for writes
+  │
+  ├─ Can users select or influence the AI model?
+  │   └─ YES → Check model selection validation (Phase 5)
+  │   └─ Flag if: freeform model ID, no server-side validation
   │
   └─ Are there cost/rate controls?
       └─ NO → Flag: potential for cost exploitation
@@ -131,11 +179,45 @@ If the LLM has tool access (function calling, MCP, plugins):
 
 ### Phase 5: Cost & Rate Controls
 
+```bash
+# Find model selection on client side
+grep -rn "model.*select\|selectedModel\|modelId\|model.*choice\|availableModels" --include="*.ts" --include="*.tsx" src/
+
+# Find feature flags that gate AI features
+grep -rn "feature.*flag\|featureFlag\|isEnabled\|canUse.*AI\|isPro\|subscription" --include="*.ts" --include="*.tsx" src/ | grep -i "ai\|llm\|chat\|generat"
+
+# Find client-side parameters that could affect cost
+grep -rn "maxTokens\|max_tokens\|temperature\|topP\|top_p\|web.*search\|webSearch" --include="*.ts" --include="*.tsx" src/
+```
+
 - [ ] **Per-user rate limits**: Are API calls limited per student/teacher?
 - [ ] **Token budgets**: Are max tokens enforced for input and output?
-- [ ] **Model selection**: Can users trigger expensive models (e.g., by crafting long inputs)?
+- [ ] **Model selection validation**: If users choose a model on the frontend, is the selection validated server-side? Can a user manipulate the API request to use a more expensive model (e.g., changing `gpt-4o-mini` to `gpt-4o` in the request body)?
+- [ ] **Feature flag gating**: Are expensive AI features gated behind subscription tiers?
+- [ ] **Parameter manipulation**: Can users modify cost-affecting parameters (temperature, max_tokens, web search toggle) beyond intended limits?
 - [ ] **Retry limits**: Are failed calls retried with backoff? Is there a retry cap?
 - [ ] **Monitoring**: Are there alerts for unusual usage spikes?
+
+### Phase 6: Client-Side Concerns (Backend-Proxied Architecture)
+
+When LLM calls go through your backend, audit these frontend-specific risks:
+
+```bash
+# Find token/auth resolution for AI endpoints (multi-context apps)
+grep -rn "getGlobalToken\|getToken\|activeToken\|getEmbeddedToken" --include="*.ts" --include="*.tsx" src/ | grep -i "chat\|stream\|ai\|llm"
+
+# Find SSE/stream error handling (may leak data in error responses)
+grep -rn "console\.\(error\|log\)" --include="*.ts" --include="*.tsx" src/ | grep -i "stream\|sse\|event.*data\|parse.*event"
+
+# Find analytics tracking near AI features
+grep -rn "track(\|capture(" --include="*.ts" --include="*.tsx" src/ | grep -i "ai\|chat\|generat\|tool\|assistant\|essay"
+```
+
+- [ ] **Token scope isolation**: In multi-context apps (iframe, embedded, mobile), is the correct auth token used for AI endpoints? Could a student token access teacher AI features?
+- [ ] **Model ID server-side validation**: If the frontend sends a model ID, does the backend validate it against allowed models for this user's tier/role?
+- [ ] **Stream error data leakage**: Do SSE error handlers log raw stream data (which may contain LLM reasoning, system prompt fragments, or student data)?
+- [ ] **Analytics with AI context**: Does the `track()` function send LLM prompts, responses, or tool parameters to PostHog/GA?
+- [ ] **AI output caching**: Is LLM output cached in React Query with appropriate TTL? Could cached responses persist sensitive student-specific content?
 
 ## Red Flags — Immediate Escalation
 
@@ -149,6 +231,11 @@ If the LLM has tool access (function calling, MCP, plugins):
 - LLM generates HTML that's rendered with `dangerouslySetInnerHTML`
 - No content policy or safety guidelines in system prompts
 - Conversation history stored indefinitely without retention policy
+- Client-side model selection sent to backend without server-side validation — users can force expensive models
+- Multi-context token fallback chain (global → embedded → iframe) without strict scope checking
+- SSE stream error handlers logging raw `event.data` to console in production
+- Analytics tracking AI interactions with full prompt/response context sent to third parties
+- Feature flags for AI features checked only on frontend (backend doesn't enforce tier limits)
 
 ## Output
 
