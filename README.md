@@ -18,13 +18,8 @@ EdTech companies handle some of the most sensitive data on the planet: student r
 | [edtech-compliance](plugins/edtech-compliance/) | Compliance | FERPA, COPPA, GDPR, KVKK compliance checklist scanner |
 | [auth-flow-review](plugins/auth-flow-review/) | Authentication | Token handling, session management, RBAC review |
 | [api-surface-audit](plugins/api-surface-audit/) | API Security | Map exposed endpoints, check auth & rate-limiting |
-
-### Planned
-
-| Skill | Category | Purpose |
-|---|---|---|
-| `frontend-xss-audit` | Frontend Security | React/Vue XSS vector detection |
-| `dependency-risk-check` | Supply Chain | Audit deps for vulns + abandonment signals |
+| [frontend-xss-audit](plugins/frontend-xss-audit/) | Frontend Security | React/Vue/Angular XSS vector detection |
+| [dependency-risk-check](plugins/dependency-risk-check/) | Supply Chain | Audit deps for vulns, abandonment & license risks |
 
 ## Installation
 
