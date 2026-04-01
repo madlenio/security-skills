@@ -75,6 +75,10 @@ Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
 
 You're free to use, adapt, and share these skills — even commercially — as long as you give credit and share alike.
 
+## Acknowledgments
+
+This project is inspired by [Trail of Bits' skills repository](https://github.com/trailofbits/skills) — a pioneering collection of Claude Code security skills for code auditing, smart contract analysis, and vulnerability research. We adapted their skill structure and plugin architecture for the EdTech domain. Thank you to the Trail of Bits team for open-sourcing their work and showing the way.
+
 ## About Madlen
 
 [Madlen.io](https://madlen.io) is an AI-powered educational platform used by thousands of teachers. We build tools that make teaching smarter, not harder. This skills repository is our way of giving back to the EdTech community — helping everyone ship more securely.
